@@ -1,0 +1,722 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<title>Chat</title>
+<style>
+:root{
+  --bg:#fff;--surface:#f8fafd;--line:#e1e3e1;--text:#1f1f1f;--sub:#5f6368;
+  --accent:#0b57d0;--accent-weak:#d3e3fd;--other:#f0f4f9;--danger:#b3261e;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--surface);color:var(--text);
+  font-family:"Google Sans","Roboto","Hiragino Sans","Noto Sans JP","Yu Gothic UI",system-ui,sans-serif;font-size:15px}
+button{font:inherit;cursor:pointer}
+input{font:inherit}
+.hidden{display:none!important}
+
+/* ===== レイアウト ===== */
+#app{display:flex;flex-direction:column;height:100vh;height:100dvh;max-width:880px;margin:0 auto;background:var(--bg);
+  border-left:1px solid var(--line);border-right:1px solid var(--line)}
+header{display:flex;align-items:center;gap:12px;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--bg)}
+.room-icon{width:36px;height:36px;border-radius:50%;background:var(--accent-weak);display:grid;place-items:center;font-size:18px}
+.room-meta{flex:1;min-width:0}
+.room-title{font-size:17px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.room-sub{font-size:12px;color:var(--sub);display:flex;align-items:center;gap:6px}
+.dot{width:7px;height:7px;border-radius:50%;background:#1e8e3e}
+.dot.off{background:#d93025}
+.icon-btn{border:none;background:transparent;width:40px;height:40px;border-radius:50%;display:grid;place-items:center;color:var(--sub)}
+.icon-btn:hover{background:#eef1f5}
+.icon-btn svg{width:22px;height:22px;fill:currentColor}
+
+/* ===== メッセージ ===== */
+#list{flex:1;overflow-y:auto;padding:16px 16px 8px;scroll-behavior:auto}
+.empty{color:var(--sub);text-align:center;margin-top:30%;font-size:14px}
+.divider{display:flex;align-items:center;gap:12px;color:var(--sub);font-size:12px;margin:18px 0 10px}
+.divider::before,.divider::after{content:"";flex:1;height:1px;background:var(--line)}
+.row{display:flex;gap:10px;margin-top:14px;align-items:flex-start}
+.row.cont{margin-top:3px}
+.avatar{width:32px;height:32px;border-radius:50%;flex:0 0 32px;color:#fff;display:grid;place-items:center;font-size:14px;font-weight:500}
+.row.cont .avatar{visibility:hidden;height:0}
+.col{display:flex;flex-direction:column;min-width:0;max-width:75%}
+.meta{font-size:12px;color:var(--sub);margin:0 4px 3px}
+.meta b{color:var(--text);font-weight:500;margin-right:6px;font-size:13px}
+.bubble{background:var(--other);padding:8px 13px;border-radius:4px 18px 18px 18px;line-height:1.5;word-break:break-word;white-space:pre-wrap;width:fit-content}
+.row.cont .bubble{border-radius:18px}
+.row.mine{flex-direction:row-reverse}
+.row.mine .avatar{display:none}
+.row.mine .col{align-items:flex-end}
+.row.mine .bubble{background:var(--accent-weak);border-radius:18px 4px 18px 18px}
+.row.mine.cont .bubble{border-radius:18px}
+.time{font-size:11px;color:var(--sub);margin:2px 6px 0}
+
+/* ===== 入力欄 ===== */
+footer{padding:8px 14px 12px;padding-bottom:max(12px,env(safe-area-inset-bottom));position:relative}
+.status{font-size:12px;color:var(--sub);text-align:center;min-height:16px;margin-bottom:4px}
+.composer{display:flex;align-items:center;gap:4px;background:var(--other);border-radius:26px;padding:4px 6px 4px 4px}
+.composer.locked{opacity:.6}
+#msg{flex:1;border:none;background:transparent;outline:none;padding:10px 4px;min-width:0;font-size:15px}
+.count{font-size:12px;color:var(--sub);min-width:36px;text-align:right}
+.count.max{color:var(--danger)}
+#sendBtn{color:var(--accent)}
+#sendBtn:disabled,#emojiBtn:disabled{color:#bbb;cursor:default;background:transparent}
+#emojiPanel{position:absolute;bottom:72px;left:14px;width:min(340px,calc(100% - 28px));max-height:260px;overflow-y:auto;background:#fff;
+  border:1px solid var(--line);border-radius:14px;box-shadow:0 4px 18px rgba(0,0,0,.12);padding:8px;display:grid;grid-template-columns:repeat(8,1fr);gap:2px;z-index:5}
+#emojiPanel button{border:none;background:none;font-size:22px;padding:4px 0;border-radius:8px}
+#emojiPanel button:hover{background:#eef1f5}
+
+/* ===== モーダル ===== */
+.overlay{position:fixed;inset:0;background:rgba(32,33,36,.45);display:grid;place-items:center;z-index:20;padding:16px}
+.overlay.solid{background:var(--surface)}
+.card{background:#fff;border-radius:24px;padding:24px;width:min(400px,100%);max-height:90vh;overflow-y:auto;box-shadow:0 6px 30px rgba(0,0,0,.15)}
+.card h2{margin:0 0 6px;font-size:22px;font-weight:400}
+.card p.desc{margin:0 0 16px;color:var(--sub);font-size:13px;line-height:1.6}
+.card h3{font-size:14px;font-weight:500;margin:20px 0 8px;color:var(--sub)}
+.field{display:block;margin-bottom:12px}
+.field span{display:block;font-size:12px;color:var(--sub);margin:0 0 4px 4px}
+.field input{width:100%;padding:11px 14px;border:1px solid #c4c7c5;border-radius:10px;outline:none;background:#fff}
+.field input:focus{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.btn{border:none;border-radius:20px;padding:10px 22px;background:var(--accent);color:#fff;font-weight:500}
+.btn:disabled{opacity:.5;cursor:default}
+.btn.text{background:transparent;color:var(--accent);padding:10px 12px}
+.btn.danger{background:transparent;color:var(--danger);padding:6px 10px;font-size:13px}
+.actions{display:flex;justify-content:flex-end;gap:8px;margin-top:8px}
+.err{color:var(--danger);font-size:13px;min-height:18px;margin:4px 0}
+.members{list-style:none;margin:0;padding:0;border:1px solid var(--line);border-radius:12px}
+.members li{display:flex;align-items:center;gap:10px;padding:8px 10px;border-top:1px solid var(--line)}
+.members li:first-child{border-top:none}
+.members .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.badge{font-size:11px;background:var(--accent-weak);color:var(--accent);padding:2px 8px;border-radius:10px}
+hr{border:none;border-top:1px solid var(--line);margin:18px 0}
+#toast{position:fixed;left:50%;bottom:110px;transform:translateX(-50%);background:#323232;color:#fff;padding:10px 18px;border-radius:8px;
+  font-size:14px;z-index:30;max-width:90vw;opacity:0;transition:opacity .2s;pointer-events:none}
+#toast.show{opacity:1}
+</style>
+</head>
+<body>
+
+<div id="app" class="hidden">
+  <header>
+    <div class="room-icon">💬</div>
+    <div class="room-meta">
+      <div class="room-title" id="roomTitle"></div>
+      <div class="room-sub"><span class="dot" id="netDot"></span><span id="roomSub"></span></div>
+    </div>
+    <button class="icon-btn" id="settingsBtn" title="設定">
+      <svg viewBox="0 0 24 24"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm8.9 3a8.9 8.9 0 0 0-.2-1.6l2-1.6-2-3.4-2.4 1a9 9 0 0 0-2.7-1.6L15.2 1h-4l-.4 2.6A9 9 0 0 0 8.1 5.2l-2.4-1-2 3.4 2 1.6a8.9 8.9 0 0 0 0 3.2l-2 1.6 2 3.4 2.4-1a9 9 0 0 0 2.7 1.6l.4 2.6h4l.4-2.6a9 9 0 0 0 2.7-1.6l2.4 1 2-3.4-2-1.6c.1-.5.2-1.1.2-1.6z"/></svg>
+    </button>
+  </header>
+  <div id="list"></div>
+  <footer>
+    <div id="emojiPanel" class="hidden"></div>
+    <div class="status" id="status"></div>
+    <div class="composer" id="composer">
+      <button class="icon-btn" id="emojiBtn" title="絵文字">
+        <svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 18a8 8 0 1 1 0-16 8 8 0 0 1 0 16zm-3.5-9a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zm7 0a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zM12 17.5c2.3 0 4.3-1.5 5.1-3.5H6.9c.8 2 2.8 3.5 5.1 3.5z"/></svg>
+      </button>
+      <input id="msg" type="text" autocomplete="off" enterkeyhint="send" placeholder="メッセージを入力">
+      <span class="count" id="count"></span>
+      <button class="icon-btn" id="sendBtn" title="送信">
+        <svg viewBox="0 0 24 24"><path d="M3 20.5V14l9-2-9-2V3.5L22 12 3 20.5z"/></svg>
+      </button>
+    </div>
+  </footer>
+</div>
+
+<div id="overlay" class="overlay solid hidden"><div class="card" id="card"></div></div>
+<div id="toast"></div>
+
+<script>
+"use strict";
+/* =====================================================================
+   設定（ここだけ編集）
+   ===================================================================== */
+const CONFIG = {
+  OWNER_NAME: "管理者",      // ← 最初の1人（管理者）の名前
+  ROOM_TITLE: "トークルーム", // ← ルーム名
+  GH_OWNER: "",              // 空欄なら URL（ユーザー名.github.io/リポジトリ名/）から自動判定
+  GH_REPO: "",               // 独自ドメインの場合は両方とも入力してください
+  DATA_BRANCH: "chat-data",  // データ保存用ブランチ（Pagesの公開ブランチとは別にする）
+  DATA_PATH: "room.json",    // データファイル名（中身はすべて暗号化）
+  MAX_LEN: 20,               // 1メッセージの上限文字数
+  POLL_MS: 4000,             // 新着確認の間隔（ミリ秒）
+  KEEP_MESSAGES: 500,        // 保存する最大メッセージ数
+};
+const EMOJIS = "😀😃😄😁😆😅🤣😂🙂😉😊😇🥰😍🤩😘😋😛😜🤪😎🤓🥳😏😌😴🤔🤗🤭🫢😶😐🙄😬😮😲😳🥺😢😭😤😠😡🤯😱🥶🥵🤢🤧😷🤒👍👎👌✌️🤞🙏👏🙌👋💪🫶❤️🧡💛💚💙💜🖤🤍💔💯✨🔥⭐🌟🎉🎊🎁🎂🍰🍺🍻☕🍙🍜🍣🍕🍔🍟🌸🌈☀️🌙⛄🐶🐱🐰🐻🐼🐧👀💤💦💢❗❓⭕❌✅🆗🆖";
+
+/* =====================================================================
+   ユーティリティ
+   ===================================================================== */
+const $ = s => document.querySelector(s);
+const te = new TextEncoder(), td = new TextDecoder();
+const rnd = n => crypto.getRandomValues(new Uint8Array(n));
+const uid = () => Array.from(rnd(9), b => b.toString(16).padStart(2, "0")).join("");
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const norm = s => (s || "").normalize("NFC").trim();
+const nkey = s => norm(s).toLowerCase();
+const seg = (window.Intl && Intl.Segmenter) ? new Intl.Segmenter("ja", { granularity: "grapheme" }) : null;
+const graphemes = s => seg ? Array.from(seg.segment(s), x => x.segment) : Array.from(s);
+function b64(buf) {
+  const u8 = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+  let s = "";
+  for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+const ub64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+function toast(msg) {
+  const t = $("#toast"); t.textContent = msg; t.classList.add("show");
+  clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove("show"), 2600);
+}
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+}
+
+/* =====================================================================
+   暗号化（AES-GCM 256 / PBKDF2）
+   - ルーム鍵でチャット内容・メンバー名・トークンをまとめて暗号化
+   - ルーム鍵は「名前＋パスワード」から作った鍵で人数分ラップ
+   ===================================================================== */
+const ITER = 200000;
+async function deriveKek(name, pass, salt) {
+  const base = await crypto.subtle.importKey("raw", te.encode(nkey(name) + "\u0000" + pass), "PBKDF2", false, ["deriveKey"]);
+  return crypto.subtle.deriveKey({ name: "PBKDF2", salt, iterations: ITER, hash: "SHA-256" },
+    base, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+}
+async function makeEntry(id, name, pass, roomRaw) {
+  const s = rnd(16), i = rnd(12);
+  const k = await deriveKek(name, pass, s);
+  const w = await crypto.subtle.encrypt({ name: "AES-GCM", iv: i }, k, roomRaw);
+  return { id, s: b64(s), i: b64(i), k: b64(w) };
+}
+async function openEntry(e, name, pass) {
+  try {
+    const k = await deriveKek(name, pass, ub64(e.s));
+    return new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv: ub64(e.i) }, k, ub64(e.k)));
+  } catch { return null; }
+}
+const importRoom = raw => crypto.subtle.importKey("raw", raw, "AES-GCM", false, ["encrypt", "decrypt"]);
+async function seal(key, obj) {
+  const i = rnd(12);
+  const c = await crypto.subtle.encrypt({ name: "AES-GCM", iv: i }, key, te.encode(JSON.stringify(obj)));
+  return { i: b64(i), d: b64(c) };
+}
+async function unseal(key, o) {
+  const p = await crypto.subtle.decrypt({ name: "AES-GCM", iv: ub64(o.i) }, key, ub64(o.d));
+  return JSON.parse(td.decode(p));
+}
+
+/* =====================================================================
+   GitHub ストレージ
+   ===================================================================== */
+function resolveRepo() {
+  if (CONFIG.GH_OWNER && CONFIG.GH_REPO) return { owner: CONFIG.GH_OWNER, repo: CONFIG.GH_REPO };
+  const m = location.hostname.match(/^([^.]+)\.github\.io$/i);
+  if (!m) return null;
+  const first = location.pathname.split("/").filter(Boolean)[0];
+  return { owner: m[1], repo: first && !first.includes(".") ? first : `${m[1]}.github.io` };
+}
+const REPO = resolveRepo();
+const API = REPO ? `https://api.github.com/repos/${REPO.owner}/${REPO.repo}` : "";
+const FILE_URL = () => `${API}/contents/${CONFIG.DATA_PATH.split("/").map(encodeURIComponent).join("/")}`;
+function hdr(token, extra) {
+  const h = { Accept: "application/vnd.github+json", ...(extra || {}) };
+  if (token) h.Authorization = "Bearer " + token;
+  return h;
+}
+async function ghGet(token, etag) {
+  const h = hdr(token);
+  if (etag) h["If-None-Match"] = etag;
+  const r = await fetch(`${FILE_URL()}?ref=${encodeURIComponent(CONFIG.DATA_BRANCH)}`, { headers: h, cache: "no-store" });
+  if (r.status === 304) return { same: true };
+  if (r.status === 404) return { none: true };
+  if (r.status === 403 || r.status === 429) throw new Error("アクセスが集中しています。少し待ってからお試しください");
+  if (!r.ok) throw new Error(`読み込みエラー (${r.status})`);
+  const j = await r.json();
+  return { sha: j.sha, etag: r.headers.get("ETag"), outer: JSON.parse(atob(j.content.replace(/\s/g, ""))) };
+}
+async function ghPut(token, outer, sha) {
+  const body = { message: "update", content: btoa(JSON.stringify(outer)), branch: CONFIG.DATA_BRANCH };
+  if (sha) body.sha = sha;
+  const r = await fetch(FILE_URL(), { method: "PUT", headers: hdr(token, { "Content-Type": "application/json" }), body: JSON.stringify(body) });
+  if (r.status === 409 || r.status === 422) return { conflict: true };
+  if (r.status === 401 || r.status === 403) throw new Error("GitHubトークンが無効か、権限が不足しています");
+  if (!r.ok) throw new Error(`書き込みエラー (${r.status})`);
+  const j = await r.json();
+  return { sha: j.content.sha };
+}
+async function checkToken(token) {
+  const r = await fetch(API, { headers: hdr(token), cache: "no-store" });
+  if (!r.ok) throw new Error("トークンでリポジトリにアクセスできません");
+  const repo = await r.json();
+  if (repo.permissions && !repo.permissions.push) throw new Error("トークンに書き込み権限がありません");
+  return repo;
+}
+async function ensureBranch(token) {
+  const repo = await checkToken(token);
+  if (repo.default_branch === CONFIG.DATA_BRANCH) return;
+  const ref = b => `${API}/git/ref/heads/${encodeURIComponent(b)}`;
+  if ((await fetch(ref(CONFIG.DATA_BRANCH), { headers: hdr(token), cache: "no-store" })).ok) return;
+  const d = await fetch(ref(repo.default_branch), { headers: hdr(token), cache: "no-store" });
+  if (!d.ok) throw new Error("既定ブランチを取得できません");
+  const sha = (await d.json()).object.sha;
+  const c = await fetch(`${API}/git/refs`, {
+    method: "POST", headers: hdr(token, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ ref: "refs/heads/" + CONFIG.DATA_BRANCH, sha })
+  });
+  if (!c.ok && c.status !== 422) throw new Error("データ用ブランチを作成できません（トークン権限を確認）");
+}
+
+/* =====================================================================
+   状態
+   ===================================================================== */
+const S = { token: null, roomKey: null, roomRaw: null, outer: null, state: null, sha: null, etag: null, me: null, timer: null, old: new Set(), busy: false };
+
+function applyState(outer, state, sha, etag) {
+  if (S.sha && S.sha !== sha) S.old.add(S.sha);
+  Object.assign(S, { outer, state, sha, etag: etag ?? null });
+  if (state.token) S.token = state.token;
+}
+
+let queue = Promise.resolve();
+function mutate(fn) {
+  const p = queue.then(() => doMutate(fn));
+  queue = p.catch(() => {});
+  return p;
+}
+async function doMutate(fn) {
+  S.busy = true;
+  try {
+    for (let a = 0; a < 5; a++) {
+      const r = await ghGet(S.token);
+      if (r.none) throw new Error("データが見つかりません");
+      let outer, state, sha;
+      if (S.old.has(r.sha)) { outer = S.outer; state = S.state; sha = S.sha; }      // 古いキャッシュが返った場合
+      else { outer = r.outer; sha = r.sha; state = await unseal(S.roomKey, outer); }
+      outer = structuredClone(outer); state = structuredClone(state);
+      fn(state, outer);
+      const next = { v: 1, e: outer.e, ...(await seal(S.roomKey, state)) };
+      const w = await ghPut(S.token, next, sha);
+      if (w.conflict) { await sleep(400 + Math.random() * 800); continue; }
+      if (sha !== S.sha) S.old.add(sha);
+      applyState(next, state, w.sha);
+      render();
+      return;
+    }
+    throw new Error("混み合っています。もう一度お試しください");
+  } finally { S.busy = false; }
+}
+
+/* =====================================================================
+   ログイン / 初期設定
+   ===================================================================== */
+function openModal(html, solid) {
+  const o = $("#overlay");
+  o.classList.toggle("solid", !!solid);
+  $("#card").innerHTML = html;
+  o.classList.remove("hidden");
+}
+function closeModal() { $("#overlay").classList.add("hidden"); $("#card").innerHTML = ""; }
+
+function showLogin(message) {
+  openModal(`
+    <h2>入室</h2>
+    <p class="desc">名前とパスワードを入力してください。</p>
+    <form id="f">
+      <label class="field"><span>名前</span><input id="lName" autocomplete="username" required></label>
+      <label class="field"><span>パスワード</span><input id="lPass" type="password" autocomplete="current-password" required></label>
+      <div class="err" id="err"></div>
+      <div class="actions"><button class="btn" id="go">入室する</button></div>
+    </form>`, true);
+  if (message) $("#err").textContent = message;
+  if (!REPO) { $("#err").textContent = "設定エラー：CONFIG の GH_OWNER / GH_REPO を入力してください"; $("#go").disabled = true; }
+  $("#lName").focus();
+  $("#f").onsubmit = async ev => {
+    ev.preventDefault();
+    const btn = $("#go"); btn.disabled = true; btn.textContent = "認証中…"; $("#err").textContent = "";
+    try { await doLogin($("#lName").value, $("#lPass").value); }
+    catch (e) { $("#err").textContent = e.message; btn.disabled = false; btn.textContent = "入室する"; }
+  };
+}
+
+async function doLogin(nameRaw, pass) {
+  const name = norm(nameRaw);
+  if (!name || !pass) throw new Error("名前とパスワードを入力してください");
+  const r = await ghGet(null);
+  if (r.none) {
+    if (nkey(name) === nkey(CONFIG.OWNER_NAME)) return showSetup(name, pass);
+    throw new Error("名前またはパスワードが違います");
+  }
+  for (const e of r.outer.e || []) {
+    const raw = await openEntry(e, name, pass);
+    if (!raw) continue;
+    const roomKey = await importRoom(raw);
+    const state = await unseal(roomKey, r.outer);
+    if (!state.members.some(m => m.id === e.id)) continue;
+    Object.assign(S, { roomKey, roomRaw: raw, me: e.id, old: new Set(), sha: null });
+    applyState(r.outer, state, r.sha);
+    return enterRoom();
+  }
+  throw new Error("名前またはパスワードが違います");
+}
+
+function showSetup(name, pass) {
+  openModal(`
+    <h2>ルームの初期設定</h2>
+    <p class="desc">管理者として最初の設定を行います。<br>
+      GitHubの Fine-grained トークン（このリポジトリのみ / Contents: Read and write）を入力してください。
+      トークンは暗号化されて保存され、画面やコードには表示されません。</p>
+    <form id="f">
+      <label class="field"><span>パスワード（確認のためもう一度）</span><input id="sPass" type="password" autocomplete="new-password" required></label>
+      <label class="field"><span>GitHub トークン</span><input id="sTok" type="password" autocomplete="off" required placeholder="github_pat_..."></label>
+      <div class="err" id="err"></div>
+      <div class="actions"><button type="button" class="btn text" id="back">戻る</button><button class="btn" id="go">作成する</button></div>
+    </form>`, true);
+  $("#back").onclick = () => showLogin();
+  $("#sPass").focus();
+  $("#f").onsubmit = async ev => {
+    ev.preventDefault();
+    const err = $("#err"), btn = $("#go"); err.textContent = "";
+    if ($("#sPass").value !== pass) return err.textContent = "パスワードが一致しません";
+    if (pass.length < 8) return err.textContent = "パスワードは8文字以上にしてください（戻って入力し直してください）";
+    btn.disabled = true; btn.textContent = "作成中…";
+    try {
+      const token = $("#sTok").value.trim();
+      await ensureBranch(token);
+      const roomRaw = rnd(32), roomKey = await importRoom(roomRaw), id = uid();
+      const state = { v: 1, owner: id, token, members: [{ id, name }], messages: [] };
+      const outer = { v: 1, e: [await makeEntry(id, name, pass, roomRaw)], ...(await seal(roomKey, state)) };
+      const w = await ghPut(token, outer, null);
+      if (w.conflict) throw new Error("既にルームが存在します。再読み込みしてください");
+      Object.assign(S, { roomKey, roomRaw, me: id, old: new Set(), sha: null });
+      applyState(outer, state, w.sha);
+      enterRoom();
+    } catch (e) { err.textContent = e.message; btn.disabled = false; btn.textContent = "作成する"; }
+  };
+}
+
+function enterRoom() {
+  closeModal();
+  $("#app").classList.remove("hidden");
+  $("#roomTitle").textContent = CONFIG.ROOM_TITLE;
+  render(true);
+  startPoll();
+  $("#msg").focus();
+}
+
+function logout(message) {
+  stopPoll();
+  Object.assign(S, { token: null, roomKey: null, roomRaw: null, outer: null, state: null, sha: null, etag: null, me: null, old: new Set() });
+  $("#list").innerHTML = "";
+  $("#msg").value = "";
+  $("#app").classList.add("hidden");
+  showLogin(message);
+}
+
+/* =====================================================================
+   新着確認
+   ===================================================================== */
+function stopPoll() { clearTimeout(S.timer); S.timer = null; }
+function startPoll() {
+  stopPoll();
+  const tick = async () => { await poll(); if (S.roomKey) S.timer = setTimeout(tick, CONFIG.POLL_MS); };
+  S.timer = setTimeout(tick, CONFIG.POLL_MS);
+}
+async function poll() {
+  if (!S.roomKey || document.hidden || S.busy) return;
+  try {
+    const r = await ghGet(S.token, S.etag);
+    setNet(true);
+    if (r.same || r.none || !S.roomKey) return;
+    if (r.sha === S.sha || S.old.has(r.sha)) { S.etag = r.etag; return; }
+    const state = await unseal(S.roomKey, r.outer);
+    if (!state.members.some(m => m.id === S.me) || !(r.outer.e || []).some(e => e.id === S.me))
+      return logout("このルームのメンバーから外れました");
+    applyState(r.outer, state, r.sha, r.etag);
+    render();
+  } catch { setNet(false); }
+}
+document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); });
+function setNet(ok) { $("#netDot").classList.toggle("off", !ok); }
+
+/* =====================================================================
+   描画
+   ===================================================================== */
+const WD = "日月火水木金土";
+const pad = n => String(n).padStart(2, "0");
+function colorOf(s) { let h = 0; for (const c of s) h = (h * 31 + c.codePointAt(0)) >>> 0; return `hsl(${h % 360} 45% 48%)`; }
+function memberName(m) { const x = S.state.members.find(v => v.id === m.m); return x ? x.name : m.n; }
+function isLocked() {
+  const ms = S.state ? S.state.messages : [];
+  const last = ms[ms.length - 1];
+  return !!last && last.m === S.me;
+}
+
+function render(forceBottom) {
+  if (!S.state) return;
+  const list = $("#list");
+  const atBottom = forceBottom || list.scrollHeight - list.scrollTop - list.clientHeight < 80;
+  const ms = S.state.messages;
+  $("#roomSub").textContent = `メンバー ${S.state.members.length}人`;
+  $("#settingsBtn").title = S.state.owner === S.me ? "設定・メンバー管理" : "設定";
+
+  const frag = document.createDocumentFragment();
+  if (!ms.length) frag.appendChild(el("div", "empty", "まだメッセージはありません。最初のひとことをどうぞ 👋"));
+  let lastDay = "", prev = null;
+  for (const m of ms) {
+    const d = new Date(m.ts);
+    const day = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+    if (day !== lastDay) {
+      frag.appendChild(el("div", "divider", `${d.getMonth() + 1}月${d.getDate()}日(${WD[d.getDay()]})`));
+      lastDay = day; prev = null;
+    }
+    const mine = m.m === S.me;
+    const cont = prev && prev.m === m.m && m.ts - prev.ts < 5 * 60 * 1000;
+    const name = memberName(m);
+    const row = el("div", "row" + (mine ? " mine" : "") + (cont ? " cont" : ""));
+    const av = el("div", "avatar", graphemes(name)[0] || "?");
+    av.style.background = colorOf(name);
+    const col = el("div", "col");
+    if (!cont) {
+      const meta = el("div", "meta");
+      if (!mine) meta.appendChild(el("b", null, name));
+      meta.appendChild(document.createTextNode(`${pad(d.getHours())}:${pad(d.getMinutes())}`));
+      col.appendChild(meta);
+    }
+    col.appendChild(el("div", "bubble", m.t));
+    row.append(av, col);
+    frag.appendChild(row);
+    prev = m;
+  }
+  list.replaceChildren(frag);
+  if (atBottom) list.scrollTop = list.scrollHeight;
+  updateComposer();
+}
+
+let sending = false;
+function updateComposer() {
+  const locked = isLocked();
+  const input = $("#msg");
+  const off = locked || sending;
+  input.disabled = off; $("#emojiBtn").disabled = off;
+  $("#composer").classList.toggle("locked", off);
+  input.placeholder = locked ? "相手の返信を待っています" : "メッセージを入力";
+  $("#status").textContent = sending ? "送信中…" : locked ? "⏳ 相手の返信があるまで送信できません" : "";
+  if (off) $("#emojiPanel").classList.add("hidden");
+  updCount();
+}
+function updCount() {
+  const n = graphemes($("#msg").value).length;
+  const c = $("#count");
+  c.textContent = `${n}/${CONFIG.MAX_LEN}`;
+  c.classList.toggle("max", n >= CONFIG.MAX_LEN);
+  $("#sendBtn").disabled = !norm($("#msg").value) || $("#msg").disabled;
+}
+
+/* =====================================================================
+   送信・入力
+   ===================================================================== */
+async function send() {
+  const input = $("#msg");
+  const text = input.value.trim();
+  if (!text || sending || isLocked()) return;
+  if (graphemes(text).length > CONFIG.MAX_LEN) return toast(`${CONFIG.MAX_LEN}文字までです`);
+  sending = true; updateComposer();
+  try {
+    await mutate(st => {
+      const me = st.members.find(m => m.id === S.me);
+      if (!me) throw new Error("メンバーではありません");
+      const last = st.messages[st.messages.length - 1];
+      if (last && last.m === S.me) throw new Error("相手の返信を待ってください");
+      st.messages.push({ id: uid(), m: S.me, n: me.name, t: text, ts: Date.now() });
+      if (st.messages.length > CONFIG.KEEP_MESSAGES) st.messages.splice(0, st.messages.length - CONFIG.KEEP_MESSAGES);
+    });
+    input.value = "";
+    render(true);
+  } catch (e) { toast(e.message); }
+  finally { sending = false; updateComposer(); if (!input.disabled) input.focus(); }
+}
+
+(function setupInput() {
+  const input = $("#msg");
+  let composing = false;
+  const clamp = () => {
+    const g = graphemes(input.value);
+    if (g.length > CONFIG.MAX_LEN) { input.value = g.slice(0, CONFIG.MAX_LEN).join(""); toast(`${CONFIG.MAX_LEN}文字までです`); }
+    updCount();
+  };
+  input.addEventListener("compositionstart", () => composing = true);
+  input.addEventListener("compositionend", () => { composing = false; clamp(); });
+  input.addEventListener("input", () => { if (!composing) clamp(); else updCount(); });
+  input.addEventListener("keydown", e => {
+    if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); send(); }
+  });
+  $("#sendBtn").onclick = send;
+
+  const panel = $("#emojiPanel");
+  for (const em of graphemes(EMOJIS)) {
+    const b = el("button", null, em); b.type = "button";
+    b.onclick = () => insertEmoji(em);
+    panel.appendChild(b);
+  }
+  $("#emojiBtn").onclick = e => { e.stopPropagation(); panel.classList.toggle("hidden"); };
+  document.addEventListener("click", e => { if (!panel.contains(e.target)) panel.classList.add("hidden"); });
+
+  function insertEmoji(em) {
+    if (input.disabled) return;
+    const s = input.selectionStart ?? input.value.length, en = input.selectionEnd ?? s;
+    const v = input.value.slice(0, s) + em + input.value.slice(en);
+    if (graphemes(v).length > CONFIG.MAX_LEN) return toast(`${CONFIG.MAX_LEN}文字までです`);
+    input.value = v;
+    const p = s + em.length;
+    input.focus(); input.setSelectionRange(p, p); updCount();
+  }
+})();
+
+/* =====================================================================
+   設定（メンバー管理など）
+   ===================================================================== */
+$("#settingsBtn").onclick = showSettings;
+
+function showSettings() {
+  const owner = S.state.owner === S.me;
+  openModal(`
+    <h2>設定</h2>
+    <p class="desc" id="who"></p>
+    <h3>メンバー</h3>
+    <ul class="members" id="mem"></ul>
+    <div id="ownerArea" class="${owner ? "" : "hidden"}">
+      <h3>メンバーを追加</h3>
+      <p class="desc">追加した名前と初期パスワードを本人に伝えてください。</p>
+      <form id="addF">
+        <label class="field"><span>名前</span><input id="aName" required maxlength="20"></label>
+        <label class="field"><span>初期パスワード（8文字以上）</span><input id="aPass" type="text" autocomplete="off" required></label>
+        <div class="err" id="aErr"></div>
+        <div class="actions"><button class="btn" id="aGo">追加する</button></div>
+      </form>
+      <hr>
+      <h3>GitHub トークンの更新</h3>
+      <form id="tF">
+        <label class="field"><span>新しいトークン</span><input id="tTok" type="password" autocomplete="off" required></label>
+        <div class="err" id="tErr"></div>
+        <div class="actions"><button class="btn" id="tGo">更新する</button></div>
+      </form>
+    </div>
+    <hr>
+    <h3>パスワード変更</h3>
+    <form id="pF">
+      <label class="field"><span>現在のパスワード</span><input id="pOld" type="password" autocomplete="current-password" required></label>
+      <label class="field"><span>新しいパスワード（8文字以上）</span><input id="pNew" type="password" autocomplete="new-password" required></label>
+      <div class="err" id="pErr"></div>
+      <div class="actions"><button class="btn" id="pGo">変更する</button></div>
+    </form>
+    <hr>
+    <div class="actions"><button class="btn text" id="out">退室（ログアウト）</button><button class="btn" id="close">閉じる</button></div>
+  `);
+  const meName = S.state.members.find(m => m.id === S.me)?.name || "";
+  $("#who").textContent = `${meName} さんとして入室中`;
+  $("#close").onclick = closeModal;
+  $("#out").onclick = () => logout();
+  drawMembers();
+
+  const busy = (btn, on, label) => { btn.disabled = on; btn.textContent = on ? "処理中…" : label; };
+
+  $("#addF").onsubmit = async ev => {
+    ev.preventDefault();
+    const name = norm($("#aName").value), pass = $("#aPass").value, err = $("#aErr"), btn = $("#aGo");
+    err.textContent = "";
+    if (!name) return err.textContent = "名前を入力してください";
+    if (pass.length < 8) return err.textContent = "パスワードは8文字以上にしてください";
+    if (S.state.members.some(m => nkey(m.name) === nkey(name))) return err.textContent = "同じ名前のメンバーがいます";
+    busy(btn, true, "追加する");
+    try {
+      const id = uid();
+      const entry = await makeEntry(id, name, pass, S.roomRaw);
+      await mutate((st, outer) => {
+        if (st.owner !== S.me) throw new Error("管理者のみ追加できます");
+        if (st.members.some(m => nkey(m.name) === nkey(name))) throw new Error("同じ名前のメンバーがいます");
+        st.members.push({ id, name });
+        outer.e.push(entry);
+      });
+      $("#aName").value = ""; $("#aPass").value = "";
+      toast(`${name} さんを追加しました`); drawMembers();
+    } catch (e) { err.textContent = e.message; }
+    busy(btn, false, "追加する");
+  };
+
+  $("#tF").onsubmit = async ev => {
+    ev.preventDefault();
+    const token = $("#tTok").value.trim(), err = $("#tErr"), btn = $("#tGo");
+    err.textContent = ""; busy(btn, true, "更新する");
+    const prevTok = S.token;
+    try {
+      await checkToken(token);
+      S.token = token;
+      await mutate(st => { if (st.owner !== S.me) throw new Error("管理者のみ変更できます"); st.token = token; });
+      $("#tTok").value = ""; toast("トークンを更新しました");
+    } catch (e) { S.token = prevTok; err.textContent = e.message; }
+    busy(btn, false, "更新する");
+  };
+
+  $("#pF").onsubmit = async ev => {
+    ev.preventDefault();
+    const oldP = $("#pOld").value, newP = $("#pNew").value, err = $("#pErr"), btn = $("#pGo");
+    err.textContent = "";
+    if (newP.length < 8) return err.textContent = "新しいパスワードは8文字以上にしてください";
+    busy(btn, true, "変更する");
+    try {
+      const mine = S.outer.e.find(e => e.id === S.me);
+      if (!mine || !(await openEntry(mine, meName, oldP))) throw new Error("現在のパスワードが違います");
+      const entry = await makeEntry(S.me, meName, newP, S.roomRaw);
+      await mutate((st, outer) => {
+        const i = outer.e.findIndex(e => e.id === S.me);
+        if (i < 0) throw new Error("メンバー情報が見つかりません");
+        outer.e[i] = entry;
+      });
+      $("#pOld").value = ""; $("#pNew").value = ""; toast("パスワードを変更しました");
+    } catch (e) { err.textContent = e.message; }
+    busy(btn, false, "変更する");
+  };
+}
+
+function drawMembers() {
+  const ul = $("#mem"); if (!ul) return;
+  const owner = S.state.owner === S.me;
+  ul.replaceChildren();
+  for (const m of S.state.members) {
+    const li = el("li");
+    const av = el("div", "avatar", graphemes(m.name)[0] || "?"); av.style.background = colorOf(m.name);
+    li.append(av, el("span", "nm", m.name + (m.id === S.me ? "（あなた）" : "")));
+    if (m.id === S.state.owner) li.appendChild(el("span", "badge", "管理者"));
+    if (owner && m.id !== S.me) {
+      const b = el("button", "btn danger", "削除"); b.type = "button";
+      b.onclick = async () => {
+        if (!confirm(`${m.name} さんをメンバーから削除しますか？`)) return;
+        b.disabled = true;
+        try {
+          await mutate((st, outer) => {
+            st.members = st.members.filter(x => x.id !== m.id);
+            outer.e = outer.e.filter(x => x.id !== m.id);
+          });
+          toast(`${m.name} さんを削除しました`); drawMembers();
+        } catch (e) { toast(e.message); b.disabled = false; }
+      };
+      li.appendChild(b);
+    }
+    ul.appendChild(li);
+  }
+}
+
+/* ===================================================================== */
+if (!window.crypto || !crypto.subtle) {
+  openModal(`<h2>非対応</h2><p class="desc">このブラウザでは利用できません（HTTPSでアクセスしてください）。</p>`, true);
+} else {
+  showLogin();
+}
+</script>
+</body>
+</html>
