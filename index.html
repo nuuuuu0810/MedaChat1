@@ -50,7 +50,12 @@ header{display:flex;align-items:center;gap:12px;padding:10px 16px;border-bottom:
 .row.mine .col{align-items:flex-end}
 .row.mine .bubble{background:var(--accent-weak);border-radius:18px 4px 18px 18px}
 .row.mine.cont .bubble{border-radius:18px}
-.time{font-size:11px;color:var(--sub);margin:2px 6px 0}
+.line{display:flex;align-items:flex-end;gap:6px}
+.bubble.tap{cursor:pointer;-webkit-user-select:none;user-select:none}
+.unsend{border:1px solid var(--line);background:#fff;color:var(--danger);font-size:12px;border-radius:14px;padding:4px 10px;white-space:nowrap;
+  box-shadow:0 1px 4px rgba(0,0,0,.08)}
+.row.mine .line{flex-direction:row-reverse}
+.time{font-size:11px;color:var(--sub);white-space:nowrap;flex:0 0 auto;margin-bottom:2px}
 
 /* ===== 入力欄 ===== */
 footer{padding:8px 14px 12px;padding-bottom:max(12px,env(safe-area-inset-bottom));position:relative}
@@ -140,7 +145,7 @@ const CONFIG = {
   GH_REPO: "",               // 独自ドメインの場合は両方とも入力してください
   DATA_BRANCH: "chat-data",  // データ保存用ブランチ（Pagesの公開ブランチとは別にする）
   DATA_PATH: "room.json",    // データファイル名（中身はすべて暗号化）
-  MAX_LEN: 20,               // 1メッセージの上限文字数
+  MAX_LEN: 10,               // 1メッセージの上限文字数
   POLL_MS: 4000,             // 新着確認の間隔（ミリ秒）
   KEEP_MESSAGES: 500,        // 保存する最大メッセージ数
 };
@@ -201,6 +206,43 @@ async function openEntry(e, name, pass) {
   } catch { return null; }
 }
 const importRoom = raw => crypto.subtle.importKey("raw", raw, "AES-GCM", false, ["encrypt", "decrypt"]);
+const concat = (a, b) => { const u = new Uint8Array(a.length + b.length); u.set(a); u.set(b, a.length); return u; };
+
+/* 管理者専用の暗号（ログイン履歴用）：公開鍵で誰でも暗号化でき、管理者だけが復号できる */
+const EC = { name: "ECDH", namedCurve: "P-256" };
+async function newOwnerKeys(ownerRaw) {
+  const kp = await crypto.subtle.generateKey(EC, true, ["deriveKey"]);
+  const pub = await crypto.subtle.exportKey("jwk", kp.publicKey);
+  const priv = await crypto.subtle.exportKey("jwk", kp.privateKey);
+  return { ownerPub: pub, ownerPriv: await seal(await importRoom(ownerRaw), priv) };
+}
+async function sealForOwner(pubJwk, obj) {
+  const pub = await crypto.subtle.importKey("jwk", pubJwk, EC, false, []);
+  const eph = await crypto.subtle.generateKey(EC, true, ["deriveKey"]);
+  const k = await crypto.subtle.deriveKey({ name: "ECDH", public: pub }, eph.privateKey, { name: "AES-GCM", length: 256 }, false, ["encrypt"]);
+  const i = rnd(12);
+  const d = await crypto.subtle.encrypt({ name: "AES-GCM", iv: i }, k, te.encode(JSON.stringify(obj)));
+  return { e: b64(await crypto.subtle.exportKey("raw", eph.publicKey)), i: b64(i), d: b64(d) };
+}
+async function loadOwnerPriv() {
+  if (S.ownerPriv) return S.ownerPriv;
+  if (!S.ownerRaw || !S.state.ownerPriv) throw new Error("一度パスワードで入室すると表示できます");
+  const jwk = await unseal(await importRoom(S.ownerRaw), S.state.ownerPriv);
+  return S.ownerPriv = await crypto.subtle.importKey("jwk", jwk, EC, false, ["deriveKey"]);
+}
+async function openForOwner(priv, rec) {
+  const eph = await crypto.subtle.importKey("raw", ub64(rec.e), EC, false, []);
+  const k = await crypto.subtle.deriveKey({ name: "ECDH", public: eph }, priv, { name: "AES-GCM", length: 256 }, false, ["decrypt"]);
+  return JSON.parse(td.decode(await crypto.subtle.decrypt({ name: "AES-GCM", iv: ub64(rec.i) }, k, ub64(rec.d))));
+}
+function deviceLabel() {
+  const u = navigator.userAgent;
+  const os = /iPhone/.test(u) ? "iPhone" : /iPad/.test(u) ? "iPad" : /Android/.test(u) ? "Android"
+    : /Mac OS X/.test(u) ? (navigator.maxTouchPoints > 1 ? "iPad" : "Mac") : /Windows/.test(u) ? "Windows" : "その他";
+  const br = / Line\//.test(u) ? "LINE" : /Instagram/.test(u) ? "Instagram" : /Edg\//.test(u) ? "Edge"
+    : /CriOS|Chrome\//.test(u) ? "Chrome" : /FxiOS|Firefox\//.test(u) ? "Firefox" : /Safari\//.test(u) ? "Safari" : "ブラウザ";
+  return `${os} / ${br}`;
+}
 async function seal(key, obj) {
   const i = rnd(12);
   const c = await crypto.subtle.encrypt({ name: "AES-GCM", iv: i }, key, te.encode(JSON.stringify(obj)));
@@ -276,7 +318,7 @@ async function ensureBranch(token) {
    招待リンク（メンバーはパスワード不要。リンクの合言葉を端末に記憶）
    ===================================================================== */
 const INV_KEY = `medachat:${REPO ? REPO.owner + "/" + REPO.repo : ""}:invite`;
-let memInvite = null;
+let memInvite = null, inviteJustOpened = false;
 const invite = {
   get() { try { return localStorage.getItem(INV_KEY) || memInvite; } catch { return memInvite; } },
   set(v) { memInvite = v; try { localStorage.setItem(INV_KEY, v); } catch {} },
@@ -284,7 +326,7 @@ const invite = {
 };
 (function captureInvite() {
   const m = location.hash.match(/[#&]i=([A-Za-z0-9_-]{16,})/);
-  if (m) { invite.set(m[1]); history.replaceState(null, "", location.pathname + location.search); }
+  if (m) { invite.set(m[1]); inviteJustOpened = true; history.replaceState(null, "", location.pathname + location.search); }
 })();
 const inviteCred = s => "inv:" + s;
 const inviteUrl = s => `${location.origin}${location.pathname}#i=${s}`;
@@ -292,7 +334,8 @@ const inviteUrl = s => `${location.origin}${location.pathname}#i=${s}`;
 /* =====================================================================
    状態
    ===================================================================== */
-const S = { token: null, roomKey: null, roomRaw: null, outer: null, state: null, sha: null, etag: null, me: null, timer: null, old: new Set(), busy: false };
+const S = { token: null, roomKey: null, roomRaw: null, wrapRaw: null, ownerRaw: null, ownerPriv: null,
+  outer: null, state: null, sha: null, etag: null, me: null, timer: null, old: new Set(), busy: false };
 
 function applyState(outer, state, sha, etag) {
   if (S.sha && S.sha !== sha) S.old.add(S.sha);
@@ -358,9 +401,9 @@ function showLogin(message) {
   const sync = () => {
     $("#pWrap").classList.toggle("hidden", !usePass);
     $("#toggle").classList.toggle("hidden", !inv);
-    $("#toggle").textContent = usePass ? "名前だけで入室" : "管理者はこちら";
+    $("#toggle").textContent = usePass ? "名前だけで入室" : "パスワードで入室";
     $("#lDesc").textContent = usePass
-      ? "管理者は名前とパスワードを入力してください。メンバーの方は、管理者から届いた招待リンクを開いてください。"
+      ? "この端末では初めての入室です。管理者は名前とパスワードを入力してください（次回からは名前だけで入れます）。メンバーの方は、管理者から届いた招待リンクを開いてください。"
       : "あなたの名前を入力してください。";
   };
   sync();
@@ -392,12 +435,19 @@ async function doLogin(nameRaw, pass, isPassword) {
   for (const e of r.outer.e || []) {
     const raw = await openEntry(e, name, pass);
     if (!raw) continue;
-    const roomKey = await importRoom(raw);
+    const roomRaw = raw.slice(0, 32);
+    const roomKey = await importRoom(roomRaw);
     const state = await unseal(roomKey, r.outer);
-    if (!state.members.some(m => m.id === e.id)) continue;
-    Object.assign(S, { roomKey, roomRaw: raw, me: e.id, old: new Set(), sha: null });
+    const me = state.members.find(m => m.id === e.id);
+    if (!me) continue;
+    Object.assign(S, { roomKey, roomRaw, wrapRaw: raw, ownerRaw: raw.length >= 64 ? raw.slice(32, 64) : null,
+      ownerPriv: null, me: e.id, old: new Set(), sha: null });
     applyState(r.outer, state, r.sha);
-    return enterRoom();
+    enterRoom();
+    const how = isPassword ? "パスワード" : e.t === "d" ? "自動（記憶した端末）" : inviteJustOpened ? "招待リンク" : "自動（記憶した端末）";
+    inviteJustOpened = false;
+    afterLogin(me.name, isPassword ? pass : null, how).catch(err => console.warn(err));
+    return;
   }
   throw new Error(ng);
 }
@@ -425,14 +475,16 @@ function showSetup(name, pass) {
     try {
       const token = $("#sTok").value.trim();
       await ensureBranch(token);
-      const roomRaw = rnd(32), roomKey = await importRoom(roomRaw), id = uid();
-      const state = { v: 1, owner: id, token, members: [{ id, name }], messages: [] };
-      const outer = { v: 1, e: [await makeEntry(id, name, pass, roomRaw)], ...(await seal(roomKey, state)) };
+      const roomRaw = rnd(32), ownerRaw = rnd(32), wrapRaw = concat(roomRaw, ownerRaw);
+      const roomKey = await importRoom(roomRaw), id = uid();
+      const state = { v: 1, owner: id, token, members: [{ id, name }], messages: [], logs: [], ...(await newOwnerKeys(ownerRaw)) };
+      const outer = { v: 1, e: [await makeEntry(id, name, pass, wrapRaw)], ...(await seal(roomKey, state)) };
       const w = await ghPut(token, outer, null);
       if (w.conflict) throw new Error("既にルームが存在します。再読み込みしてください");
-      Object.assign(S, { roomKey, roomRaw, me: id, old: new Set(), sha: null });
+      Object.assign(S, { roomKey, roomRaw, wrapRaw, ownerRaw, ownerPriv: null, me: id, old: new Set(), sha: null });
       applyState(outer, state, w.sha);
       enterRoom();
+      afterLogin(name, pass, "パスワード（初期設定）").catch(err => console.warn(err));
     } catch (e) { err.textContent = e.message; btn.disabled = false; btn.textContent = "作成する"; }
   };
 }
@@ -446,9 +498,40 @@ function enterRoom() {
   $("#msg").focus();
 }
 
+/* 入室後の処理：①管理者鍵の用意 ②この端末を記憶（次回からパスワード不要） ③ログイン履歴の記録 */
+async function afterLogin(name, pass, how) {
+  const isOwner = S.state.owner === S.me;
+  let ownerUpd = null, pwEntry = null, devEntry = null, devSecret = null;
+  if (isOwner && pass) {
+    if (!S.ownerRaw || !S.state.ownerPub) {           // 旧形式からの移行
+      const ownerRaw = rnd(32), wrapRaw = concat(S.roomRaw, ownerRaw);
+      ownerUpd = await newOwnerKeys(ownerRaw);
+      pwEntry = await makeEntry(S.me, name, pass, wrapRaw);
+      Object.assign(S, { ownerRaw, wrapRaw, ownerPriv: null });
+    }
+    devSecret = b64url(rnd(18));
+    devEntry = { ...(await makeEntry(S.me, name, inviteCred(devSecret), S.wrapRaw)), t: "d" };
+  }
+  const pub = ownerUpd ? ownerUpd.ownerPub : S.state.ownerPub;
+  const rec = pub ? await sealForOwner(pub, { m: S.me, n: name, ts: Date.now(), how, dev: deviceLabel() }) : null;
+  if (!ownerUpd && !devEntry && !rec) return;
+  await mutate((st, outer) => {
+    if (ownerUpd) {
+      Object.assign(st, ownerUpd);
+      st.logs = [];
+      outer.e = outer.e.filter(x => x.id !== S.me);
+      outer.e.push(pwEntry);
+    }
+    if (devEntry) outer.e.push(devEntry);
+    if (rec) st.logs = (st.logs || []).concat(rec).slice(-300);
+  });
+  if (devSecret) invite.set(devSecret);
+}
+
 function logout(message) {
   stopPoll();
-  Object.assign(S, { token: null, roomKey: null, roomRaw: null, outer: null, state: null, sha: null, etag: null, me: null, old: new Set() });
+  Object.assign(S, { token: null, roomKey: null, roomRaw: null, wrapRaw: null, ownerRaw: null, ownerPriv: null,
+    outer: null, state: null, sha: null, etag: null, me: null, old: new Set() });
   $("#list").innerHTML = "";
   $("#msg").value = "";
   $("#app").classList.add("hidden");
@@ -519,13 +602,25 @@ function render(forceBottom) {
     const av = el("div", "avatar", graphemes(name)[0] || "?");
     av.style.background = colorOf(name);
     const col = el("div", "col");
-    if (!cont) {
+    if (!cont && !mine) {
       const meta = el("div", "meta");
-      if (!mine) meta.appendChild(el("b", null, name));
-      meta.appendChild(document.createTextNode(`${pad(d.getHours())}:${pad(d.getMinutes())}`));
+      meta.appendChild(el("b", null, name));
       col.appendChild(meta);
     }
-    col.appendChild(el("div", "bubble", m.t));
+    const line = el("div", "line");
+    const bubble = el("div", "bubble", m.t);
+    line.append(bubble, el("span", "time", `${pad(d.getHours())}:${pad(d.getMinutes())}`));
+    if (mine) {
+      bubble.classList.add("tap");
+      bubble.title = "タップで送信取り消し";
+      bubble.onclick = ev => { ev.stopPropagation(); selectedMsg = selectedMsg === m.id ? null : m.id; render(); };
+      if (selectedMsg === m.id) {
+        const un = el("button", "unsend", "送信取り消し"); un.type = "button";
+        un.onclick = ev => { ev.stopPropagation(); unsend(m.id); };
+        line.appendChild(un);
+      }
+    }
+    col.appendChild(line);
     row.append(av, col);
     frag.appendChild(row);
     prev = m;
@@ -533,6 +628,21 @@ function render(forceBottom) {
   list.replaceChildren(frag);
   if (atBottom) list.scrollTop = list.scrollHeight;
   updateComposer();
+}
+
+let selectedMsg = null;
+document.addEventListener("click", () => { if (selectedMsg) { selectedMsg = null; render(); } });
+async function unsend(id) {
+  if (!confirm("このメッセージの送信を取り消しますか？\n（相手の画面からも消えます）")) return;
+  selectedMsg = null;
+  try {
+    await mutate(st => {
+      const i = st.messages.findIndex(x => x.id === id && x.m === S.me);
+      if (i < 0) throw new Error("取り消せるメッセージが見つかりません");
+      st.messages.splice(i, 1);
+    });
+    toast("送信を取り消しました");
+  } catch (e) { toast(e.message); render(); }
 }
 
 let sending = false;
@@ -643,6 +753,17 @@ function showSettings() {
         </div>
       </div>
       <hr>
+      <h3>ログイン履歴（管理者のみ）</h3>
+      <div class="actions" style="justify-content:flex-start;margin:0 0 8px">
+        <button type="button" class="btn" id="logBtn">表示する</button>
+        <button type="button" class="btn danger" id="logClear">すべて削除</button>
+      </div>
+      <ul class="members hidden" id="logList" style="max-height:260px;overflow-y:auto"></ul>
+      <hr>
+      <h3>記憶した端末</h3>
+      <p class="desc">管理者として名前だけで入れる端末の記憶をすべて解除します（この端末も含む）。次回はパスワードが必要になります。</p>
+      <div class="actions" style="justify-content:flex-start;margin:0"><button type="button" class="btn danger" id="devReset">すべての端末の記憶を解除</button></div>
+      <hr>
       <h3>GitHub トークンの更新</h3>
       <form id="tF">
         <label class="field"><span>新しいトークン</span><input id="tTok" type="password" autocomplete="off" required></label>
@@ -670,6 +791,56 @@ function showSettings() {
   drawMembers();
 
   const busy = (btn, on, label) => { btn.disabled = on; btn.textContent = on ? "処理中…" : label; };
+
+  $("#logBtn").onclick = async () => {
+    const ul = $("#logList"), btn = $("#logBtn");
+    busy(btn, true, "表示する");
+    try {
+      const priv = await loadOwnerPriv();
+      const recs = [];
+      for (const r of (S.state.logs || [])) { try { recs.push({ key: r.e, ...(await openForOwner(priv, r)) }); } catch {} }
+      ul.replaceChildren();
+      if (!recs.length) ul.appendChild(el("li", null, "まだ履歴はありません"));
+      for (const x of recs.reverse()) {
+        const d = new Date(x.ts);
+        const li = el("li");
+        const info = el("div"); info.style.cssText = "flex:1;min-width:0";
+        const top = el("div"); top.appendChild(el("b", null, x.n));
+        top.appendChild(document.createTextNode(`　${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`));
+        info.append(top, el("div", "meta", `${x.dev}・${x.how}`));
+        const del = el("button", "btn danger", "削除"); del.type = "button";
+        del.onclick = async () => {
+          del.disabled = true;
+          try {
+            await mutate(st => { st.logs = (st.logs || []).filter(r => r.e !== x.key); });
+            li.remove();
+          } catch (e) { toast(e.message); del.disabled = false; }
+        };
+        li.append(info, del);
+        ul.appendChild(li);
+      }
+      ul.classList.remove("hidden");
+    } catch (e) { toast(e.message); }
+    busy(btn, false, "再読み込み");
+  };
+
+  $("#logClear").onclick = async () => {
+    if (!confirm("ログイン履歴をすべて削除しますか？（元に戻せません）")) return;
+    try {
+      await mutate(st => { if (st.owner !== S.me) throw new Error("管理者のみ削除できます"); st.logs = []; });
+      const ul = $("#logList"); ul.replaceChildren(el("li", null, "まだ履歴はありません")); ul.classList.remove("hidden");
+      toast("ログイン履歴を削除しました");
+    } catch (e) { toast(e.message); }
+  };
+
+  $("#devReset").onclick = async () => {
+    if (!confirm("管理者の「記憶した端末」をすべて解除しますか？")) return;
+    try {
+      await mutate((st, outer) => { outer.e = outer.e.filter(x => !(x.id === S.me && x.t === "d")); });
+      invite.del();
+      toast("解除しました。次回はパスワードで入室してください");
+    } catch (e) { toast(e.message); }
+  };
 
   $("#copyLink").onclick = async () => {
     const t = $("#linkTxt");
@@ -722,11 +893,11 @@ function showSettings() {
     if (newP.length < 8) return err.textContent = "新しいパスワードは8文字以上にしてください";
     busy(btn, true, "変更する");
     try {
-      const mine = S.outer.e.find(e => e.id === S.me);
+      const mine = S.outer.e.find(e => e.id === S.me && e.t !== "d");
       if (!mine || !(await openEntry(mine, meName, oldP))) throw new Error("現在のパスワードが違います");
-      const entry = await makeEntry(S.me, meName, newP, S.roomRaw);
+      const entry = await makeEntry(S.me, meName, newP, S.wrapRaw);
       await mutate((st, outer) => {
-        const i = outer.e.findIndex(e => e.id === S.me);
+        const i = outer.e.findIndex(e => e.id === S.me && e.t !== "d");
         if (i < 0) throw new Error("メンバー情報が見つかりません");
         outer.e[i] = entry;
       });
