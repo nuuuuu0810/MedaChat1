@@ -599,13 +599,14 @@ function render(forceBottom) {
     const line = el("div", "line");
     const bubble = el("div", "bubble", m.t);
     line.append(bubble, el("span", "time", `${pad(d.getHours())}:${pad(d.getMinutes())}`));
-    if (mine) {
+    const isOwner = S.state.owner === S.me;
+    if (mine || isOwner) {
       bubble.classList.add("tap");
-      bubble.title = "タップで送信取り消し";
+      bubble.title = mine ? "タップで送信取り消し" : "タップで削除（管理者）";
       bubble.onclick = ev => { ev.stopPropagation(); selectedMsg = selectedMsg === m.id ? null : m.id; render(); };
       if (selectedMsg === m.id) {
-        const un = el("button", "unsend", "送信取り消し"); un.type = "button";
-        un.onclick = ev => { ev.stopPropagation(); unsend(m.id); };
+        const un = el("button", "unsend", mine ? "送信取り消し" : "削除"); un.type = "button";
+        un.onclick = ev => { ev.stopPropagation(); unsend(m.id, mine); };
         line.appendChild(un);
       }
     }
@@ -621,16 +622,18 @@ function render(forceBottom) {
 
 let selectedMsg = null;
 document.addEventListener("click", () => { if (selectedMsg) { selectedMsg = null; render(); } });
-async function unsend(id) {
-  if (!confirm("このメッセージの送信を取り消しますか？\n（相手の画面からも消えます）")) return;
+async function unsend(id, mine) {
+  const msg = mine ? "このメッセージの送信を取り消しますか？\n（相手の画面からも消えます）" : "このメッセージを削除しますか？\n（全員の画面から消えます）";
+  if (!confirm(msg)) return;
   selectedMsg = null;
   try {
     await mutate(st => {
-      const i = st.messages.findIndex(x => x.id === id && x.m === S.me);
-      if (i < 0) throw new Error("取り消せるメッセージが見つかりません");
+      const own = st.owner === S.me;
+      const i = st.messages.findIndex(x => x.id === id && (x.m === S.me || own));
+      if (i < 0) throw new Error("削除できるメッセージが見つかりません");
       st.messages.splice(i, 1);
     });
-    toast("送信を取り消しました");
+    toast(mine ? "送信を取り消しました" : "メッセージを削除しました");
   } catch (e) { toast(e.message); render(); }
 }
 
@@ -742,6 +745,10 @@ function showSettings() {
         </div>
       </div>
       <hr>
+      <h3>チャットの削除</h3>
+      <p class="desc">個別に消すときは、チャット画面でメッセージをタップして「削除」を押してください。</p>
+      <div class="actions" style="justify-content:flex-start;margin:0"><button type="button" class="btn danger" id="chatClear">チャットをすべて削除</button></div>
+      <hr>
       <h3>記憶した端末</h3>
       <p class="desc">管理者として名前だけで入れる端末の記憶をすべて解除します（この端末も含む）。次回はパスワードが必要になります。</p>
       <div class="actions" style="justify-content:flex-start;margin:0"><button type="button" class="btn danger" id="devReset">すべての端末の記憶を解除</button></div>
@@ -773,6 +780,14 @@ function showSettings() {
   drawMembers();
 
   const busy = (btn, on, label) => { btn.disabled = on; btn.textContent = on ? "処理中…" : label; };
+
+  $("#chatClear").onclick = async () => {
+    if (!confirm("チャットのメッセージをすべて削除しますか？\n全員の画面から消え、元に戻せません。")) return;
+    try {
+      await mutate(st => { if (st.owner !== S.me) throw new Error("管理者のみ削除できます"); st.messages = []; });
+      toast("チャットをすべて削除しました");
+    } catch (e) { toast(e.message); }
+  };
 
   $("#devReset").onclick = async () => {
     if (!confirm("管理者の「記憶した端末」をすべて解除しますか？")) return;
