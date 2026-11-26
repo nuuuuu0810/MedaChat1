@@ -407,7 +407,7 @@ function showLogin(message) {
     $("#toggle").textContent = usePass ? "名前だけで入室" : "パスワードで入室";
     $("#lDesc").textContent = usePass
       ? "この端末では初めての入室です。管理者は名前とパスワードを入力してください（次回からは名前だけで入れます）。メンバーの方は、管理者から届いた招待リンクを開いてください。"
-      : "あなたの名前を入力してください。";
+      : "あなたのメインのインスタのユーザーネームを入力してください。";
   };
   sync();
   $("#toggle").onclick = () => { usePass = !usePass; sync(); };
