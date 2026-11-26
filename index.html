@@ -134,7 +134,7 @@ hr{border:none;border-top:1px solid var(--line);margin:18px 0}
    設定（ここだけ編集）
    ===================================================================== */
 const CONFIG = {
-  OWNER_NAME: "medanuu1224",      // ← 最初の1人（管理者）の名前
+  OWNER_NAME: "管理者",      // ← 最初の1人（管理者）の名前
   ROOM_TITLE: "トークルーム", // ← ルーム名
   GH_OWNER: "",              // 空欄なら URL（ユーザー名.github.io/リポジトリ名/）から自動判定
   GH_REPO: "",               // 独自ドメインの場合は両方とも入力してください
@@ -165,6 +165,7 @@ function b64(buf) {
   return btoa(s);
 }
 const ub64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+const b64url = u8 => b64(u8).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 function toast(msg) {
   const t = $("#toast"); t.textContent = msg; t.classList.add("show");
   clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove("show"), 2600);
@@ -272,6 +273,23 @@ async function ensureBranch(token) {
 }
 
 /* =====================================================================
+   招待リンク（メンバーはパスワード不要。リンクの合言葉を端末に記憶）
+   ===================================================================== */
+const INV_KEY = `medachat:${REPO ? REPO.owner + "/" + REPO.repo : ""}:invite`;
+let memInvite = null;
+const invite = {
+  get() { try { return localStorage.getItem(INV_KEY) || memInvite; } catch { return memInvite; } },
+  set(v) { memInvite = v; try { localStorage.setItem(INV_KEY, v); } catch {} },
+  del() { memInvite = null; try { localStorage.removeItem(INV_KEY); } catch {} },
+};
+(function captureInvite() {
+  const m = location.hash.match(/[#&]i=([A-Za-z0-9_-]{16,})/);
+  if (m) { invite.set(m[1]); history.replaceState(null, "", location.pathname + location.search); }
+})();
+const inviteCred = s => "inv:" + s;
+const inviteUrl = s => `${location.origin}${location.pathname}#i=${s}`;
+
+/* =====================================================================
    状態
    ===================================================================== */
 const S = { token: null, roomKey: null, roomRaw: null, outer: null, state: null, sha: null, etag: null, me: null, timer: null, old: new Set(), busy: false };
@@ -323,33 +341,53 @@ function openModal(html, solid) {
 function closeModal() { $("#overlay").classList.add("hidden"); $("#card").innerHTML = ""; }
 
 function showLogin(message) {
+  const inv = invite.get();
   openModal(`
     <h2>入室</h2>
-    <p class="desc">名前とパスワードを入力してください。</p>
+    <p class="desc" id="lDesc"></p>
     <form id="f">
-      <label class="field"><span>名前</span><input id="lName" autocomplete="username" required></label>
-      <label class="field"><span>パスワード</span><input id="lPass" type="password" autocomplete="current-password" required></label>
+      <label class="field"><span>あなたの名前</span><input id="lName" autocomplete="username" required></label>
+      <label class="field" id="pWrap"><span>パスワード（管理者）</span><input id="lPass" type="password" autocomplete="current-password"></label>
       <div class="err" id="err"></div>
-      <div class="actions"><button class="btn" id="go">入室する</button></div>
+      <div class="actions">
+        <button type="button" class="btn text" id="toggle"></button>
+        <button class="btn" id="go">入室する</button>
+      </div>
     </form>`, true);
+  let usePass = !inv;
+  const sync = () => {
+    $("#pWrap").classList.toggle("hidden", !usePass);
+    $("#toggle").classList.toggle("hidden", !inv);
+    $("#toggle").textContent = usePass ? "名前だけで入室" : "管理者はこちら";
+    $("#lDesc").textContent = usePass
+      ? "管理者は名前とパスワードを入力してください。メンバーの方は、管理者から届いた招待リンクを開いてください。"
+      : "あなたの名前を入力してください。";
+  };
+  sync();
+  $("#toggle").onclick = () => { usePass = !usePass; sync(); };
   if (message) $("#err").textContent = message;
   if (!REPO) { $("#err").textContent = "設定エラー：CONFIG の GH_OWNER / GH_REPO を入力してください"; $("#go").disabled = true; }
   $("#lName").focus();
   $("#f").onsubmit = async ev => {
     ev.preventDefault();
-    const btn = $("#go"); btn.disabled = true; btn.textContent = "認証中…"; $("#err").textContent = "";
-    try { await doLogin($("#lName").value, $("#lPass").value); }
+    const btn = $("#go"); btn.disabled = true; btn.textContent = "確認中…"; $("#err").textContent = "";
+    try {
+      if (usePass) await doLogin($("#lName").value, $("#lPass").value, true);
+      else await doLogin($("#lName").value, inviteCred(inv), false);
+    }
     catch (e) { $("#err").textContent = e.message; btn.disabled = false; btn.textContent = "入室する"; }
   };
 }
 
-async function doLogin(nameRaw, pass) {
+async function doLogin(nameRaw, pass, isPassword) {
   const name = norm(nameRaw);
-  if (!name || !pass) throw new Error("名前とパスワードを入力してください");
+  if (!name) throw new Error("名前を入力してください");
+  if (!pass) throw new Error("パスワードを入力してください");
+  const ng = isPassword ? "名前またはパスワードが違います" : "名前が違うか、招待リンクが古くなっています";
   const r = await ghGet(null);
   if (r.none) {
-    if (nkey(name) === nkey(CONFIG.OWNER_NAME)) return showSetup(name, pass);
-    throw new Error("名前またはパスワードが違います");
+    if (isPassword && nkey(name) === nkey(CONFIG.OWNER_NAME)) return showSetup(name, pass);
+    throw new Error(isPassword ? ng : "ルームがまだ作成されていません");
   }
   for (const e of r.outer.e || []) {
     const raw = await openEntry(e, name, pass);
@@ -361,7 +399,7 @@ async function doLogin(nameRaw, pass) {
     applyState(r.outer, state, r.sha);
     return enterRoom();
   }
-  throw new Error("名前またはパスワードが違います");
+  throw new Error(ng);
 }
 
 function showSetup(name, pass) {
@@ -435,7 +473,7 @@ async function poll() {
     if (r.sha === S.sha || S.old.has(r.sha)) { S.etag = r.etag; return; }
     const state = await unseal(S.roomKey, r.outer);
     if (!state.members.some(m => m.id === S.me) || !(r.outer.e || []).some(e => e.id === S.me))
-      return logout("このルームのメンバーから外れました");
+      { invite.del(); return logout("このルームのメンバーから外れました"); }
     applyState(r.outer, state, r.sha, r.etag);
     render();
   } catch { setNet(false); }
@@ -591,13 +629,19 @@ function showSettings() {
     <ul class="members" id="mem"></ul>
     <div id="ownerArea" class="${owner ? "" : "hidden"}">
       <h3>メンバーを追加</h3>
-      <p class="desc">追加した名前と初期パスワードを本人に伝えてください。</p>
+      <p class="desc">追加すると招待リンクが作られます。リンクと名前を本人に送ってください。本人はリンクを開いて名前を入れるだけで入室できます。</p>
       <form id="addF">
         <label class="field"><span>名前</span><input id="aName" required maxlength="20"></label>
-        <label class="field"><span>初期パスワード（8文字以上）</span><input id="aPass" type="text" autocomplete="off" required></label>
         <div class="err" id="aErr"></div>
         <div class="actions"><button class="btn" id="aGo">追加する</button></div>
       </form>
+      <div id="linkBox" class="hidden">
+        <p class="desc" id="linkFor"></p>
+        <div style="display:flex;gap:8px">
+          <label class="field" style="flex:1;margin:0"><input id="linkTxt" readonly></label>
+          <button type="button" class="btn" id="copyLink">コピー</button>
+        </div>
+      </div>
       <hr>
       <h3>GitHub トークンの更新</h3>
       <form id="tF">
@@ -606,6 +650,7 @@ function showSettings() {
         <div class="actions"><button class="btn" id="tGo">更新する</button></div>
       </form>
     </div>
+    <div class="${owner ? "" : "hidden"}">
     <hr>
     <h3>パスワード変更</h3>
     <form id="pF">
@@ -614,6 +659,7 @@ function showSettings() {
       <div class="err" id="pErr"></div>
       <div class="actions"><button class="btn" id="pGo">変更する</button></div>
     </form>
+    </div>
     <hr>
     <div class="actions"><button class="btn text" id="out">退室（ログアウト）</button><button class="btn" id="close">閉じる</button></div>
   `);
@@ -625,24 +671,31 @@ function showSettings() {
 
   const busy = (btn, on, label) => { btn.disabled = on; btn.textContent = on ? "処理中…" : label; };
 
+  $("#copyLink").onclick = async () => {
+    const t = $("#linkTxt");
+    try { await navigator.clipboard.writeText(t.value); }
+    catch { t.select(); document.execCommand("copy"); }
+    toast("リンクをコピーしました");
+  };
+
   $("#addF").onsubmit = async ev => {
     ev.preventDefault();
-    const name = norm($("#aName").value), pass = $("#aPass").value, err = $("#aErr"), btn = $("#aGo");
+    const name = norm($("#aName").value), err = $("#aErr"), btn = $("#aGo");
     err.textContent = "";
     if (!name) return err.textContent = "名前を入力してください";
-    if (pass.length < 8) return err.textContent = "パスワードは8文字以上にしてください";
     if (S.state.members.some(m => nkey(m.name) === nkey(name))) return err.textContent = "同じ名前のメンバーがいます";
     busy(btn, true, "追加する");
     try {
-      const id = uid();
-      const entry = await makeEntry(id, name, pass, S.roomRaw);
+      const id = uid(), secret = b64url(rnd(18));
+      const entry = await makeEntry(id, name, inviteCred(secret), S.roomRaw);
       await mutate((st, outer) => {
         if (st.owner !== S.me) throw new Error("管理者のみ追加できます");
         if (st.members.some(m => nkey(m.name) === nkey(name))) throw new Error("同じ名前のメンバーがいます");
         st.members.push({ id, name });
         outer.e.push(entry);
       });
-      $("#aName").value = ""; $("#aPass").value = "";
+      $("#aName").value = "";
+      showLink(name, secret);
       toast(`${name} さんを追加しました`); drawMembers();
     } catch (e) { err.textContent = e.message; }
     busy(btn, false, "追加する");
@@ -683,6 +736,14 @@ function showSettings() {
   };
 }
 
+function showLink(name, secret) {
+  const box = $("#linkBox"); if (!box) return;
+  $("#linkFor").textContent = `${name} さんの招待リンク（このリンクを知っている人は「${name}」として入室できます。本人にだけ送ってください）`;
+  $("#linkTxt").value = inviteUrl(secret);
+  box.classList.remove("hidden");
+  box.scrollIntoView({ block: "center", behavior: "smooth" });
+}
+
 function drawMembers() {
   const ul = $("#mem"); if (!ul) return;
   const owner = S.state.owner === S.me;
@@ -693,6 +754,24 @@ function drawMembers() {
     li.append(av, el("span", "nm", m.name + (m.id === S.me ? "（あなた）" : "")));
     if (m.id === S.state.owner) li.appendChild(el("span", "badge", "管理者"));
     if (owner && m.id !== S.me) {
+      const re = el("button", "btn text", "リンク再発行"); re.type = "button";
+      re.style.cssText = "padding:6px 8px;font-size:13px";
+      re.onclick = async () => {
+        if (!confirm(`${m.name} さんの招待リンクを作り直しますか？\n（古いリンクは使えなくなります）`)) return;
+        re.disabled = true;
+        try {
+          const secret = b64url(rnd(18));
+          const entry = await makeEntry(m.id, m.name, inviteCred(secret), S.roomRaw);
+          await mutate((st, outer) => {
+            const i = outer.e.findIndex(x => x.id === m.id);
+            if (i < 0) throw new Error("メンバーが見つかりません");
+            outer.e[i] = entry;
+          });
+          showLink(m.name, secret);
+        } catch (e) { toast(e.message); }
+        re.disabled = false;
+      };
+      li.appendChild(re);
       const b = el("button", "btn danger", "削除"); b.type = "button";
       b.onclick = async () => {
         if (!confirm(`${m.name} さんをメンバーから削除しますか？`)) return;
